@@ -22,6 +22,10 @@ quick-error = "1.2"
 regex = "1"
 chrono = "0.4.7"
 
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = {version = "0.3", features=["Performance"]}
+
 [dependencies.serde]
 optional = true
 version = "1"

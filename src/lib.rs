@@ -27,7 +27,10 @@ extern crate serde;
 #[cfg(feature = "ser")]
 #[macro_use]
 extern crate serde_derive;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::SystemTime;
 
 #[cfg(test)]
 #[macro_use]
@@ -110,6 +113,16 @@ quick_error! {
         BlankPassword {
             description("Zxcvbn cannot evaluate a blank password")
         }
+        /// Indicates the native system clock couldn't be used to calculate a duration time
+        EpochError {
+            from(std::time::SystemTimeError)
+            description("System clock is set prior to 1970")
+        }
+        /// Indicates the [performance web API](https://developer.mozilla.org/en-US/docs/Web/API/Performance)
+        /// was unavailable to calculate a duration time
+        PerformanceApiError {
+            description("Unable to use the performance web API to calculate a duration time in WASM")
+        }
     }
 }
 
@@ -126,7 +139,7 @@ pub fn zxcvbn(password: &str, user_inputs: &[&str]) -> Result<Entropy, ZxcvbnErr
         return Err(ZxcvbnError::BlankPassword);
     }
 
-    let start_time = Instant::now();
+    let start_time = duration_now()?;
 
     // Only evaluate the first 100 characters of the input.
     // This prevents potential DoS attacks from sending extremely long input strings.
@@ -140,7 +153,7 @@ pub fn zxcvbn(password: &str, user_inputs: &[&str]) -> Result<Entropy, ZxcvbnErr
 
     let matches = matching::omnimatch(&password, &sanitized_inputs);
     let result = scoring::most_guessable_match_sequence(&password, &matches, false);
-    let calc_time = Instant::now() - start_time;
+    let calc_time = duration_now()? - start_time;
     let (crack_times, score) = time_estimates::estimate_attack_times(result.guesses);
     let feedback = feedback::get_feedback(score, &matches);
 
@@ -153,6 +166,24 @@ pub fn zxcvbn(password: &str, user_inputs: &[&str]) -> Result<Entropy, ZxcvbnErr
         sequence: result.sequence,
         calc_time,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// Create a time duration using the system clock
+fn duration_now() -> Result<Duration, ZxcvbnError> {
+    Ok(SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)?)
+}
+
+#[cfg(target_arch = "wasm32")]
+/// Create a time duration using the web performance API.
+fn duration_now() -> Result<Duration, ZxcvbnError> {
+    let millis = web_sys::window()
+        .and_then(|w| w.performance())
+        .ok_or(ZxcvbnError::PerformanceApiError)?
+        .now();
+
+    Ok(Duration::from_millis(millis.trunc() as u64)
+        + Duration::from_nanos((millis.fract() * 1.0e6) as u64))
 }
 
 #[cfg(test)]
